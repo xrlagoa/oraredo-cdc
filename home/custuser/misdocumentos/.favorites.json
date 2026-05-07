@@ -1,0 +1,35 @@
+[
+    {
+        "type": "Group",
+        "name": "General",
+        "parent_id": null,
+        "workspaceRoot": null,
+        "workspacePath": null,
+        "id": "sXkUE5QACM2bWzHY"
+    },
+    {
+        "type": "Group",
+        "name": "Compose",
+        "parent_id": null,
+        "workspaceRoot": null,
+        "workspacePath": null,
+        "id": "YI52skRFjM9qJN6x"
+    },
+    {
+        "type": "Group",
+        "name": "YML",
+        "parent_id": null,
+        "workspaceRoot": null,
+        "workspacePath": null,
+        "id": "rSbZGPELfjHlKz5i"
+    },
+    {
+        "type": "File",
+        "name": "/home/custuser/.ssh/config",
+        "parent_id": "sXkUE5QACM2bWzHY",
+        "fsPath": "/home/custuser/.ssh/config",
+        "workspaceRoot": null,
+        "workspacePath": null,
+        "id": "Pf9NqGtOFmK8liak"
+    }
+]

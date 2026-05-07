@@ -1,0 +1,23 @@
+# Ignorar contenido de carpetas pero mantener la carpeta
+incoming/*
+!incoming/.gitkeep
+
+incoming_old/*
+!incoming_old/.gitkeep
+
+logs/*
+!logs/.gitkeep
+
+staging/*
+!staging/.gitkeep
+
+# Ignorar todos los archivos .txt dentro de la carpeta state
+state/*.txt
+
+# Si hay archivos específicos de estado que TAMBIÉN quieres ignorar, 
+# puedes poner el nombre exacto, por ejemplo:
+# state/archivo_temporal.dat
+
+# Ignorar archivos temporales o de sistema
+*.log
+.DS_Store

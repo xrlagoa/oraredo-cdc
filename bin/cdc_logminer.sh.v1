@@ -1,0 +1,141 @@
+#!/bin/bash
+set -euo pipefail
+
+# ==========================
+# CONFIGURACIÓN
+# ==========================
+ORACLE_SID=XE
+ORACLE_HOME=/u01/app/oracle/product/11.2.0/xe
+PATH=$ORACLE_HOME/bin:$PATH
+
+ARC_DIR="/apps/olr/incoming"
+STATE_FILE="/apps/olr/state/cdc_state.env"
+LOG_DIR="/apps/olr/logs"
+LOG_FILE="$LOG_DIR/cdc_logminer_$(date +%Y%m%d_%H%M%S).log"
+
+mkdir -p "$LOG_DIR"
+
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo "=== CDC LOGMINER START $(date) ==="
+
+# ==========================
+# CARGAR ESTADO
+# ==========================
+if [[ ! -f "$STATE_FILE" ]]; then
+  echo "ERROR: State file no existe: $STATE_FILE"
+  exit 1
+fi
+
+# shellcheck source=/dev/null
+source "$STATE_FILE"
+
+echo "STATE:"
+echo "  LAST_PROCESSED_SEQUENCE=$LAST_PROCESSED_SEQUENCE"
+echo "  LAST_DICTIONARY_SEQUENCE=$LAST_DICTIONARY_SEQUENCE"
+echo "  LAST_DICTIONARY_SCN=$LAST_DICTIONARY_SCN"
+
+# ==========================
+# DESCUBRIR ARC NUEVOS
+# ==========================
+mapfile -t ALL_ARCS < <(
+  ls "$ARC_DIR"/1_*_*.arc \
+  | sed -E 's/.*1_([0-9]+)_.*/\1 \0/' \
+  | sort -n \
+  | awk -v last="$LAST_PROCESSED_SEQUENCE" '$1 > last { print $2 }'
+)
+
+if [[ "${#ALL_ARCS[@]}" -eq 0 ]]; then
+  echo "No hay nuevos ARCHIVELOGs para procesar."
+  exit 0
+fi
+
+echo "ARCHIVELOGs a procesar:"
+printf '  %s\n' "${ALL_ARCS[@]}"
+
+# ==========================
+# SELECCIÓN DEL DICCIONARIO ANCLA
+# ==========================
+DICT_ANCHOR=$(ls "$ARC_DIR"/1_"$LAST_DICTIONARY_SEQUENCE"_*.arc 2>/dev/null || true)
+
+if [[ -z "$DICT_ANCHOR" ]]; then
+  echo "ERROR: No se encuentra ARC del último diccionario ($LAST_DICTIONARY_SEQUENCE)"
+  exit 1
+fi
+
+echo "Diccionario ancla:"
+echo "  $DICT_ANCHOR"
+
+# ==========================
+# CONSTRUIR BLOQUE SQL
+# ==========================
+SQL_SCRIPT=$(mktemp)
+
+{
+  echo "BEGIN"
+  echo "  DBMS_LOGMNR.END_LOGMNR;"
+  echo "EXCEPTION WHEN OTHERS THEN NULL;"
+  echo "END;"
+  echo "/"
+  echo ""
+
+  echo "BEGIN"
+  echo "  DBMS_LOGMNR.ADD_LOGFILE("
+
+  echo "    LOGFILENAME => '$DICT_ANCHOR',"
+  echo "    OPTIONS     => DBMS_LOGMNR.NEW"
+  echo "  );"
+
+  for ARC in "${ALL_ARCS[@]}"; do
+    # saltar si es igual al diccionario ancla
+    [[ "$ARC" == "$DICT_ANCHOR" ]] && continue
+    echo "  DBMS_LOGMNR.ADD_LOGFILE("
+    echo "    LOGFILENAME => '$ARC',"
+    echo "    OPTIONS     => DBMS_LOGMNR.ADDFILE"
+    echo "  );"
+  done
+
+  echo "END;"
+  echo "/"
+  echo ""
+  echo "BEGIN"
+  echo "  DBMS_LOGMNR.START_LOGMNR("
+  echo "    OPTIONS => DBMS_LOGMNR.DICT_FROM_REDO_LOGS"
+  echo "  );"
+  echo "END;"
+  echo "/"
+} > "$SQL_SCRIPT"
+
+# ==========================
+# EJECUTAR LOGMINER
+# ==========================
+sqlplus -s / as sysdba <<EOF
+WHENEVER SQLERROR EXIT FAILURE
+@$SQL_SCRIPT
+EOF
+
+# ==========================
+# EXTRACCIÓN (SOLO DEMO)
+# ==========================
+COUNT=$(sqlplus -s / as sysdba <<EOF
+SET PAGES 0 FEEDBACK OFF VERIFY OFF HEADING OFF
+SELECT COUNT(*) FROM v\\$logmnr_contents;
+EXIT
+EOF
+)
+
+echo "Filas LogMiner leídas: $COUNT"
+
+# ==========================
+# ACTUALIZAR ESTADO
+# ==========================
+ULTIMO_ARC="${ALL_ARCS[-1]}"
+NEW_SEQ=$(echo "$ULTIMO_ARC" | sed -E 's/.*1_([0-9]+)_.*/\1/')
+
+sed -i.bak \
+  -e "s/^LAST_PROCESSED_SEQUENCE=.*/LAST_PROCESSED_SEQUENCE=$NEW_SEQ/" \
+  -e "s/^LAST_RUN_TS=.*/LAST_RUN_TS=$(date -Iseconds)/" \
+  "$STATE_FILE"
+
+echo "Estado actualizado. Última SEQUENCE procesada: $NEW_SEQ"
+echo "=== CDC LOGMINER END $(date) ==="
